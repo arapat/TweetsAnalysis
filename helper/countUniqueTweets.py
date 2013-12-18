@@ -6,9 +6,9 @@ from pyspark import SparkContext
 sc = SparkContext("ion-21-14.local:7077", "Count Unique Tweets", pyFiles=['countUniqueTweets.py'])
 
 dir_path = '/oasis/projects/nsf/csd181/arapat/project/twitter/raw/comb_election1'
-all_tweets = gen_rdd(os.path/join(dir_path, 't01')
+all_tweets = gen_rdd(os.path.join(dir_path, 't01'))
 for fnum in range(2, 71):
-    file_name = os.path/join(dir_path, 't' + '%02d' % fnum)
+    file_name = os.path.join(dir_path, 't' + '%02d' % fnum)
     all_tweets = all_tweets.join(gen_rdd(file_name))
 print "Total unique tweets: ", all_tweets.count()-1
 
