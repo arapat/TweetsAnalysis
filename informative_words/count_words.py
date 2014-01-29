@@ -28,7 +28,7 @@ def count_unique_words(files):
         else:
             all_words = words
 
-    return all_words.distinct().count()
+    return all_words.reduceByKey(add).count()
 
 
 if __name__ == '__main__':
