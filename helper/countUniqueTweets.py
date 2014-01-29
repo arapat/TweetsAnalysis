@@ -22,5 +22,9 @@ if __name__ == "__main__":
   for fnum in range(2, 71):
       file_name = os.path.join(dir_path, 't' + '%02d' % fnum)
       all_tweets = all_tweets.union(gen_rdd(file_name))
+  dir_path = 'twitter/election2'
+  for fnum in range(1, 86):
+      file_name = os.path.join(dir_path, 'u' + '%02d' % fnum)
+      all_tweets = all_tweets.union(gen_rdd(file_name))
   print "Total unique tweets: ", all_tweets.distinct().count()-1
 
