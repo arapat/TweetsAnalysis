@@ -7,14 +7,14 @@ from pyspark import SparkContext
 
 
 def gen_rdd(tweets_file):
-    return sc.textFile(tweets_file).map(process_tweet)
+    return sc.textFile(tweets_file).flatMap(process_tweet)
 
 def process_tweet(raw_tweet):
     try:
         tweet = json.loads(raw_tweet)
         return tweet['text'].split()
     except:
-        return 0
+        return []
 
 def count_unique_words(files):
     if len(files) == 0:
@@ -32,10 +32,9 @@ def count_unique_words(files):
 
 
 if __name__ == '__main__':
-    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "CountWords", pyFiles=['countWords.py'])
+    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "CountWords", pyFiles=['count_words.py'])
     dir_path = '/user/arapat/twitter/'
     files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
 
-    instance = CountWords()
-    print "Total words:", instance.count_unique_words(files)
+    print "Total words:", count_unique_words(files)
 
