@@ -30,10 +30,13 @@ def word_counts(files):
             all_words = words
 
     all_words = all_words.reduceByKey(add) \
-            .map(lambda (a, b): (b, [a])) \
+            .map(lambda (a, b): (b, 1)) \
             .reduceByKey(add) \
-            .sortByKey(ascending=False) \
-            .cache()
+            .sortByKey(ascending=True)
+#            .map(lambda (a, b): (b, [a]))
+#            .reduceByKey(add)
+#            .sortByKey(ascending=False) \
+#            .cache()
     
     print "Top 1000 words:"
     print all_words.take(1000)
@@ -45,6 +48,7 @@ if __name__ == '__main__':
     sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "CountWords", pyFiles=['count_words.py'])
     dir_path = '/user/arapat/twitter/'
     files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
+    # files = [dir_path + 't01', dir_path + 't02']
 
     print "Total words:", word_counts(files)
 
