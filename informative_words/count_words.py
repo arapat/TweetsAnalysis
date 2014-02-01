@@ -4,6 +4,7 @@
 
 import json
 from pyspark import SparkContext
+from operator import add
 
 
 def gen_rdd(tweets_file):
@@ -34,7 +35,8 @@ def count_unique_words(files):
 if __name__ == '__main__':
     sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "CountWords", pyFiles=['count_words.py'])
     dir_path = '/user/arapat/twitter/'
-    files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
+    # files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
+    files = [dir_path + 't02']
 
     print "Total words:", count_unique_words(files)
 

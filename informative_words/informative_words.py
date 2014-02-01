@@ -3,6 +3,7 @@
 import json
 from operator import add
 from pyspark import SparkContext
+from math import log
 
 word_counts_sum = None
 
@@ -39,16 +40,15 @@ def generate_word_counts(raw_tweet):
         return []
 
 
-def compute_jsd(word_pair):
+def compute_pairs_jsd(word_pair):
     global word_counts_sum
 
     # Extract information
     w1 = word_pair[0]
     w2 = word_pair[1][0]
-    w1_count = word_pair[1][1]
-    w2_count = word_pair[1][2]
-    pair_counts = word_pair[1][3]
-    wp_sum = word_pair[1][4]
+    w2_count = word_pair[1][1]
+    pair_counts = word_pair[1][2]
+    wp_sum = word_pair[1][3]
 
     wc_sum = word_counts_sum
     delta_cp = wc_sum - wp_sum
@@ -64,7 +64,10 @@ def compute_jsd(word_pair):
     kld1 = log(kld_tmp1 / kld_tmp2, 2) * p1
 
     # case 2: the probability of "t"'s occurrence when "word" is absent
-    kld2 = log(kld_tmp3 / kld_tmp4, 2) * p2
+    if w2_count == pair_counts:
+        kld2 = 0.0
+    else:
+        kld2 = log(kld_tmp3 / kld_tmp4, 2) * p2
 
     return (w1, (kld1 + kld2, w2_count, delta_cp))
 
@@ -73,6 +76,24 @@ def compute_jsd(word_pair):
 
 
 def get_jsd(files):
+    def process_stat1(wp):
+        w1 = wp[0]
+        w2 = wp[1][0][0]
+        pair_counts = wp[1][0][1]
+        wp_sum = wp[1][1]
+        return (w2, (w1, pair_counts, wp_sum))
+
+    def process_stat2(wp):
+        w2 = wp[0]
+        w1 = wp[1][0][0]
+        pair_counts = wp[1][0][1]
+        wp_sum = wp[1][0][2]
+        w2_count = wp[1][1]
+        return (w1, (w2, w2_count, pair_counts, wp_sum))
+
+    def add_pairs(a, b):
+        return (a[0] + b[0], a[1] + b[1], a[2])
+
     global word_counts_sum
 
     if len(files) == 0:
@@ -104,7 +125,7 @@ def get_jsd(files):
     # Obtain ((w1, w2), pair_counts) for subsequent computation
     all_word_pairs = None
     for file_name in files:
-        word_pairs = generate_pairs(file_name)
+        word_pairs = gen_pairs_rdd(file_name)
         if all_word_pairs:
             all_word_pairs = all_word_pairs.union(word_pairs)
         else:
@@ -116,13 +137,10 @@ def get_jsd(files):
             lambda ((w1, w2), pair_counts): (w1, pair_counts)) \
             .reduceByKey(add)
 
-    # Join the occurrence count and word pairs count
-    word_stat = all_word_counts.leftOuterJoin(sum_word_pairs)
-
     # Obtain the occurrence count of the two words in word pairs
-    all_word_pairs = all_word_pairs.))p( \
+    all_word_pairs = all_word_pairs.map( \
             lambda ((w1, w2), pair_counts): (w1, (w2, pair_counts))) \
-            .leftOuterJoin(word_stat) \
+            .leftOuterJoin(sum_word_pairs) \
             .map(process_stat1) \
             .leftOuterJoin(all_word_counts) \
             .map(process_stat2)
@@ -131,42 +149,26 @@ def get_jsd(files):
     jsd = all_word_pairs.map(compute_pairs_jsd) \
             .reduceByKey(add_pairs) \
             .map(lambda (w, (tmp_jsd, count_ir, delta)): \
-            (((tmp_jsd + float(word_counts_sum - count_ir) / delta) / 2.0), w))
+            (((tmp_jsd + float(word_counts_sum - count_ir) / delta) / 2.0), w)) \
+            .cache()
 
     # all_words.map(compute_jsd).sortByKey()
     print "Stop words:"
-    for (jsd, word) in jsd.take(1000):
-        print word, "\t", jsd
+    # print word_stat.take(100)
+    print jsd.take(100)
+    # for (jsd, word) in jsd.take(1000):
+    #     print word, "\t", jsd
 
+    # return jsd.count()
     return jsd.count()
 
-    def process_stat1(wp):
-        w1 = wp[0]
-        w2 = wp[1][0][0]
-        pair_counts = wp[1][0][1]
-        w1_count = wp[1][1][0]
-        wp_sum = wp[1][1][1]
-        if wp_sum == None:
-            wp_sum = 0
-        return (w2, (w1, w1_count, pair_counts, wp_sum))
-
-    def process_stat2(wp):
-        w2 = wp[0]
-        w1 = wp[1][0][0]
-        w1_count = wp[1][0][1]
-        pair_counts = wp[1][0][2]
-        wp_sum = wp[1][0][3]
-        w2_count = wp[1][1]
-        return (w1, (w2, w1_count, w2_count, pair_counts, wp_sum))
-
-    def add_pairs(a, b):
-        return (a[0] + b[0], a[1] + b[1], a[2])
 
 if __name__ == '__main__':
     sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "InformativeWords", pyFiles=['informative_words.py'])
     dir_path = '/user/arapat/twitter/'
     # files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
-    files = [dir_path + 't01', dir_path + 't02']
+    # files = [dir_path + 't01'] #, dir_path + 't02']
+    files = ['/user/arapat/twitter-sample/t01']
 
     print "Total words:", get_jsd(files)
 
