@@ -53,7 +53,7 @@ def compute_pairs_jsd(word_pair):
 
     # Extract information
     w1 = word_pair[0]
-    w2 = word_pair[1][0]
+    w1_count = word_pair[1][0]
     w2_count = word_pair[1][1]
     pair_counts = word_pair[1][2]
     wp_sum = word_pair[1][3]
@@ -88,7 +88,7 @@ def compute_pairs_jsd(word_pair):
                 a = 4 / 0
 
 
-    return (w1, (kld1 + kld2, w2_count, delta_cp))
+    return (w1, (kld1 + kld2, w2_count, delta_cp, w1_count))
 
     # when the probability of "t"'s occurrence when "word" occurs is 0
     # jsd = (jsd + float(ir_sum) / delta_cp) / 2.0
@@ -99,19 +99,20 @@ def get_jsd(files):
         w1 = wp[0]
         w2 = wp[1][0][0]
         pair_counts = wp[1][0][1]
-        wp_sum = wp[1][1]
-        return (w2, (w1, pair_counts, wp_sum))
+        w1_count = wp[1][1][0]
+        wp_sum = wp[1][1][1]
+        return (w2, (w1, w1_count, pair_counts, wp_sum))
 
     def process_stat2(wp):
-        w2 = wp[0]
         w1 = wp[1][0][0]
-        pair_counts = wp[1][0][1]
-        wp_sum = wp[1][0][2]
+        w1_count = wp[1][0][1]
+        pair_counts = wp[1][0][2]
+        wp_sum = wp[1][0][3]
         w2_count = wp[1][1]
-        return (w1, (w2, w2_count, pair_counts, wp_sum))
+        return (w1, (w1_count, w2_count, pair_counts, wp_sum))
 
     def add_pairs(a, b):
-        return (a[0] + b[0], a[1] + b[1], a[2])
+        return (a[0] + b[0], a[1] + b[1], a[2], a[3])
 
     global word_counts_sum
 
@@ -146,10 +147,13 @@ def get_jsd(files):
             lambda ((w1, w2), pair_counts): (w1, pair_counts)) \
             .reduceByKey(add)
 
+    # (w1_count, wp_sum)
+    word_stat = all_word_counts.leftOuterJoin(sum_word_pairs)
+
     # Obtain the occurrence count of the two words in word pairs
     all_word_pairs = all_word_pairs.map( \
             lambda ((w1, w2), pair_counts): (w1, (w2, pair_counts))) \
-            .leftOuterJoin(sum_word_pairs) \
+            .leftOuterJoin(word_stat) \
             .map(process_stat1) \
             .leftOuterJoin(all_word_counts) \
             .map(process_stat2)
@@ -157,8 +161,8 @@ def get_jsd(files):
     # Compute the JS-divergence of each word
     jsd = all_word_pairs.map(compute_pairs_jsd) \
             .reduceByKey(add_pairs) \
-            .map(lambda (w, (tmp_jsd, count_ir, delta)): \
-            (((tmp_jsd + float(word_counts_sum - count_ir) / delta) / 2.0), w)) \
+            .map(lambda (w, (tmp_jsd, count_ir, delta, w1_count)): \
+            (((tmp_jsd + float(word_counts_sum - count_ir - w1_count) / delta) / 2.0), w)) \
             .sortByKey(ascending=True)
 
     print "Stop words:"
