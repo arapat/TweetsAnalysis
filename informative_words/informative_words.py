@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Compute and rank the "informativeness" (JS-divergence) of words
 
 # import json
@@ -16,11 +17,11 @@ def generate_pairs(raw_tweet):
         raw_tweet = raw_tweet.split('\t')
         tokens = raw_tweet[0].split()
         tags = raw_tweet[1].split()
-        words = set([token.lower() + tag for token, tag in zip(tokens, tags)])
+        words = set([token.lower() + tag for token, tag in zip(tokens, tags) if tag in ['N', 'S', '^', 'Z', 'L', 'M']])
         # tweet = json.loads(raw_tweet)
         # text = tweet["text"]
         # words = set([word.strip() for word in text.split()])
-        # pairs = []
+        pairs = []
         for w1 in words:
             for w2 in words:
                 if w1 != w2:
@@ -39,7 +40,7 @@ def generate_word_counts(raw_tweet):
         raw_tweet = raw_tweet.split('\t')
         tokens = raw_tweet[0].split()
         tags = raw_tweet[1].split()
-        words = set([token.lower() + tag for token, tag in zip(tokens, tags)])
+        words = set([token.lower() + tag for token, tag in zip(tokens, tags) if tag in ['N', 'S', '^', 'Z', 'L', 'M']])
         # tweet = json.loads(raw_tweet)
         # text = tweet["text"]
         # words = set([word.strip() for word in text.split()])
@@ -86,7 +87,6 @@ def compute_pairs_jsd(word_pair):
                 a = 3 / 0
             else:
                 a = 4 / 0
-
 
     return (w1, (kld1 + kld2, w2_count, delta_cp))
 
@@ -162,8 +162,8 @@ def get_jsd(files):
             .sortByKey(ascending=True)
 
     print "Stop words:"
-    for (jsd, word) in jsd.take(1000000):
-        print word, "\t", jsd
+    for (div, word) in jsd.collect():
+        print word.encode("utf8"), "\t", div
 
     return jsd.count()
 
@@ -172,8 +172,9 @@ if __name__ == '__main__':
     sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "InformativeWords", pyFiles=['informative_words.py'])
     dir_path = '/user/arapat/twitter/'
     # files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
-    files = [dir_path + 't01'] #, dir_path + 't02']
+    # files = [dir_path + 't01'] #, dir_path + 't02']
     # files = ['/user/arapat/twitter-sample/t01']
+    files = ['/user/arapat/twitter-sample/tag']
 
     print "Total words:", get_jsd(files)
 
