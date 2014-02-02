@@ -1,6 +1,6 @@
-# Compute and rank the "informativeness" of words
+# Compute and rank the "informativeness" (JS-divergence) of words
 
-import json
+# import json
 from operator import add
 from pyspark import SparkContext
 from math import log
@@ -13,10 +13,14 @@ def gen_pairs_rdd(tweets_file):
 
 def generate_pairs(raw_tweet):
     try:
-        tweet = json.loads(raw_tweet)
-        text = tweet["text"]
-        words = set([word.strip() for word in text.split()])
-        pairs = []
+        raw_tweet = raw_tweet.split('\t')
+        tokens = raw_tweet[0].split()
+        tags = raw_tweet[1].split()
+        words = set([token.lower() + tag for token, tag in zip(tokens, tags)])
+        # tweet = json.loads(raw_tweet)
+        # text = tweet["text"]
+        # words = set([word.strip() for word in text.split()])
+        # pairs = []
         for w1 in words:
             for w2 in words:
                 if w1 != w2:
@@ -32,9 +36,13 @@ def gen_word_counts_rdd(tweets_file):
 
 def generate_word_counts(raw_tweet):
     try:
-        tweet = json.loads(raw_tweet)
-        text = tweet["text"]
-        words = set([word.strip() for word in text.split()])
+        raw_tweet = raw_tweet.split('\t')
+        tokens = raw_tweet[0].split()
+        tags = raw_tweet[1].split()
+        words = set([token.lower() + tag for token, tag in zip(tokens, tags)])
+        # tweet = json.loads(raw_tweet)
+        # text = tweet["text"]
+        # words = set([word.strip() for word in text.split()])
         return [(word, 1) for word in words]
     except:
         return []
@@ -120,18 +128,8 @@ def get_jsd(files):
             all_word_counts = word_counts
     all_word_counts = all_word_counts.reduceByKey(add)
 
-    # Obtain all words
-    # TODO: may delete
-    # all_words = all_word_counts.map(lambda (a, b): a)
-
     # Obtain the sum of occurrence_count of all words
     word_counts_sum = all_word_counts.map(lambda (a, b): b).sum()
-    
-    # Obtain total number of (valid) tweets
-    # TODO: may delete
-    # tweets_count = 0)
-    # for file_name in files:
-    #     tweets_count += count_tweets(file_name)
 
     # Obtain ((w1, w2), pair_counts) for subsequent computation
     all_word_pairs = None
@@ -141,7 +139,7 @@ def get_jsd(files):
             all_word_pairs = all_word_pairs.union(word_pairs)
         else:
             all_word_pairs = word_pairs
-    all_word_pairs = all_word_pairs.reduceByKey(add).filter(lambda ((w1, w2), count): count > 3)
+    all_word_pairs = all_word_pairs.reduceByKey(add) #.filter(lambda ((w1, w2), count): count > 3)
 
     # Obtain the sum of word pairs
     sum_word_pairs = all_word_pairs.map( \
@@ -163,9 +161,7 @@ def get_jsd(files):
             (((tmp_jsd + float(word_counts_sum - count_ir) / delta) / 2.0), w)) \
             .sortByKey(ascending=True)
 
-    # all_words.map(compute_jsd).sortByKey()
     print "Stop words:"
-    # print word_stat.take(100)
     for (jsd, word) in jsd.take(1000000):
         print word, "\t", jsd
 
@@ -180,22 +176,4 @@ if __name__ == '__main__':
     # files = ['/user/arapat/twitter-sample/t01']
 
     print "Total words:", get_jsd(files)
-
-
-
-
-
-
-# def count_tweets(tweets_file):
-#     return sc.textFile(tweets_file).map(validate_tweet).sum()
-
-
-# def validate_tweet(raw_tweet):
-#     try:
-#         json.loads(raw_tweet)["text"]
-#         return 1
-#     except:
-#         return 0
-
-
 
