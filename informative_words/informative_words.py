@@ -17,13 +17,14 @@ def generate_pairs(raw_tweet):
         raw_tweet = raw_tweet.split('\t')
         tokens = raw_tweet[0].split()
         tags = raw_tweet[1].split()
-        words = set([token.lower() + tag for token, tag in zip(tokens, tags) if tag in ['N', 'S', '^', 'Z', 'L', 'M']])
+        w1s = set([token.lower() + tag for token, tag in zip(tokens, tags) if tag in ['N', 'S', '^', 'Z', 'L', 'M']])
+        w2s = set([token.lower() + tag for token, tag in zip(tokens, tags)])
         # tweet = json.loads(raw_tweet)
         # text = tweet["text"]
         # words = set([word.strip() for word in text.split()])
         pairs = []
-        for w1 in words:
-            for w2 in words:
+        for w1 in w1s:
+            for w2 in w2s:
                 if w1 != w2:
                     pairs.append(((w1, w2), 1))
         return pairs
@@ -40,7 +41,7 @@ def generate_word_counts(raw_tweet):
         raw_tweet = raw_tweet.split('\t')
         tokens = raw_tweet[0].split()
         tags = raw_tweet[1].split()
-        words = set([token.lower() + tag for token, tag in zip(tokens, tags) if tag in ['N', 'S', '^', 'Z', 'L', 'M']])
+        words = set([token.lower() + tag for token, tag in zip(tokens, tags)])
         # tweet = json.loads(raw_tweet)
         # text = tweet["text"]
         # words = set([word.strip() for word in text.split()])
@@ -99,8 +100,8 @@ def get_jsd(files):
         w1 = wp[0]
         w2 = wp[1][0][0]
         pair_counts = wp[1][0][1]
-        w1_count = wp[1][1][0]
-        wp_sum = wp[1][1][1]
+        wp_sum = wp[1][1][0]
+        w1_count = wp[1][1][1]
         return (w2, (w1, w1_count, pair_counts, wp_sum))
 
     def process_stat2(wp):
@@ -140,7 +141,8 @@ def get_jsd(files):
             all_word_pairs = all_word_pairs.union(word_pairs)
         else:
             all_word_pairs = word_pairs
-    all_word_pairs = all_word_pairs.reduceByKey(add) #.filter(lambda ((w1, w2), count): count > 3)
+    # The filter is to avoid the long tail, but need some theoretical support. 
+    all_word_pairs = all_word_pairs.reduceByKey(add).filter(lambda ((w1, w2), count): count > 2)
 
     # Obtain the sum of word pairs
     sum_word_pairs = all_word_pairs.map( \
@@ -148,7 +150,7 @@ def get_jsd(files):
             .reduceByKey(add)
 
     # (w1_count, wp_sum)
-    word_stat = all_word_counts.leftOuterJoin(sum_word_pairs)
+    word_stat = sum_word_pairs.leftOuterJoin(all_word_counts)
 
     # Obtain the occurrence count of the two words in word pairs
     all_word_pairs = all_word_pairs.map( \
@@ -167,7 +169,7 @@ def get_jsd(files):
 
     print "Stop words:"
     for (div, word) in jsd.collect():
-        print word.encode("utf8"), "\t", div
+        print "\t".join([word[:-1].encode("utf8"), word[-1], str(div)])
 
     return jsd.count()
 
