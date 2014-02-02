@@ -64,8 +64,8 @@ def compute_pairs_jsd(word_pair):
 
     kld_tmp1 = 2.0 * pair_counts * delta_cp
     kld_tmp2 = wc_sum * pair_counts + wp_sum * w2_count - 2 * wp_sum * pair_counts 
-    kld_tmp3 = 2.0 * wp_sum * (w2_count - pair_counts) * delta_cp
-    kld_tmp4 = kld_tmp2 * delta_cp
+    kld_tmp3 = 2.0 * wp_sum * (w2_count - pair_counts)
+    kld_tmp4 = kld_tmp2
     p1 = float(pair_counts) / wp_sum
     p2 = float(w2_count - pair_counts) / delta_cp
 
