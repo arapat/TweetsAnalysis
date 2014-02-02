@@ -67,7 +67,18 @@ def compute_pairs_jsd(word_pair):
     if w2_count == pair_counts:
         kld2 = 0.0
     else:
-        kld2 = log(kld_tmp3 / kld_tmp4, 2) * p2
+        try:
+            kld2 = log(kld_tmp3 / kld_tmp4, 2) * p2
+        except:
+            if wp_sum <= 0:
+                a = 1 / 0
+            elif w2_count < pair_counts:
+                a = 2 / 0
+            elif delta_cp <= 0:
+                a = 3 / 0
+            else:
+                a = 4 / 0
+
 
     return (w1, (kld1 + kld2, w2_count, delta_cp))
 
@@ -107,7 +118,7 @@ def get_jsd(files):
             all_word_counts = all_word_counts.union(word_counts)
         else:
             all_word_counts = word_counts
-    all_word_counts.reduceByKey(add)
+    all_word_counts = all_word_counts.reduceByKey(add)
 
     # Obtain all words
     # TODO: may delete
@@ -130,7 +141,7 @@ def get_jsd(files):
             all_word_pairs = all_word_pairs.union(word_pairs)
         else:
             all_word_pairs = word_pairs
-    all_word_pairs.reduceByKey(add)
+    all_word_pairs = all_word_pairs.reduceByKey(add).filter(lambda ((w1, w2), count): count > 3)
 
     # Obtain the sum of word pairs
     sum_word_pairs = all_word_pairs.map( \
@@ -150,16 +161,14 @@ def get_jsd(files):
             .reduceByKey(add_pairs) \
             .map(lambda (w, (tmp_jsd, count_ir, delta)): \
             (((tmp_jsd + float(word_counts_sum - count_ir) / delta) / 2.0), w)) \
-            .cache()
+            .sortByKey(ascending=True)
 
     # all_words.map(compute_jsd).sortByKey()
     print "Stop words:"
     # print word_stat.take(100)
-    print jsd.take(100)
-    # for (jsd, word) in jsd.take(1000):
-    #     print word, "\t", jsd
+    for (jsd, word) in jsd.take(1000000):
+        print word, "\t", jsd
 
-    # return jsd.count()
     return jsd.count()
 
 
@@ -167,8 +176,8 @@ if __name__ == '__main__':
     sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "InformativeWords", pyFiles=['informative_words.py'])
     dir_path = '/user/arapat/twitter/'
     # files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
-    # files = [dir_path + 't01'] #, dir_path + 't02']
-    files = ['/user/arapat/twitter-sample/t01']
+    files = [dir_path + 't01'] #, dir_path + 't02']
+    # files = ['/user/arapat/twitter-sample/t01']
 
     print "Total words:", get_jsd(files)
 
