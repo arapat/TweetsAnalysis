@@ -2,6 +2,7 @@
 # Compute and rank the "informativeness" (JS-divergence) of words
 
 # import json
+import sys 
 from operator import add
 from pyspark import SparkContext
 from math import log
@@ -17,8 +18,8 @@ def generate_pairs(raw_tweet):
         raw_tweet = raw_tweet.split('\t')
         tokens = raw_tweet[0].split()
         tags = raw_tweet[1].split()
-        w1s = set([token.lower() + tag for token, tag in zip(tokens, tags) if tag in ['N', 'S', '^', 'Z', 'L', 'M']])
-        w2s = set([token.lower() + tag for token, tag in zip(tokens, tags)])
+        w1s = set([token.lower() + '\t' + tag for token, tag in zip(tokens, tags) if tag in ['N', 'S', '^', 'Z', 'L', 'M']])
+        w2s = set([token.lower() + '\t' + tag for token, tag in zip(tokens, tags)])
         # tweet = json.loads(raw_tweet)
         # text = tweet["text"]
         # words = set([word.strip() for word in text.split()])
@@ -41,7 +42,7 @@ def generate_word_counts(raw_tweet):
         raw_tweet = raw_tweet.split('\t')
         tokens = raw_tweet[0].split()
         tags = raw_tweet[1].split()
-        words = set([token.lower() + tag for token, tag in zip(tokens, tags)])
+        words = set([token.lower() + '\t' + tag for token, tag in zip(tokens, tags)])
         # tweet = json.loads(raw_tweet)
         # text = tweet["text"]
         # words = set([word.strip() for word in text.split()])
@@ -77,17 +78,7 @@ def compute_pairs_jsd(word_pair):
     if w2_count == pair_counts:
         kld2 = 0.0
     else:
-        try:
-            kld2 = log(kld_tmp3 / kld_tmp4, 2) * p2
-        except:
-            if wp_sum <= 0:
-                a = 1 / 0
-            elif w2_count < pair_counts:
-                a = 2 / 0
-            elif delta_cp <= 0:
-                a = 3 / 0
-            else:
-                a = 4 / 0
+        kld2 = log(kld_tmp3 / kld_tmp4, 2) * p2
 
     return (w1, (kld1 + kld2, w2_count, delta_cp, w1_count))
 
@@ -141,8 +132,9 @@ def get_jsd(files):
             all_word_pairs = all_word_pairs.union(word_pairs)
         else:
             all_word_pairs = word_pairs
+
     # The filter is to avoid the long tail, but need some theoretical support. 
-    all_word_pairs = all_word_pairs.reduceByKey(add).filter(lambda ((w1, w2), count): count > 2)
+    all_word_pairs = all_word_pairs.reduceByKey(add) #.filter(lambda ((w1, w2), count): count > 2)
 
     # Obtain the sum of word pairs
     sum_word_pairs = all_word_pairs.map( \
@@ -168,19 +160,28 @@ def get_jsd(files):
             .sortByKey(ascending=True)
 
     print "Stop words:"
+    # for (div, word) in jsd.take(1000000):
     for (div, word) in jsd.collect():
-        print "\t".join([word[:-1].encode("utf8"), word[-1], str(div)])
+        word = word.split('\t')
+        token = word[0]
+        tag = word[1]
+        try:
+            print "\t".join([token, tag, str(div)])
+        except:
+            print "\t".join(["[Codec unknown]", tag, str(div)])
 
     return jsd.count()
 
 
 if __name__ == '__main__':
+    reload(sys) 
+    sys.setdefaultencoding('utf8') 
     sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "InformativeWords", pyFiles=['informative_words.py'])
-    dir_path = '/user/arapat/twitter/'
+    dir_path = '/user/arapat/twitter-tag/'
     # files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
-    # files = [dir_path + 't01'] #, dir_path + 't02']
+    files = [dir_path + 't01', dir_path + 't02']
     # files = ['/user/arapat/twitter-sample/t01']
-    files = ['/user/arapat/twitter-sample/tag']
+    # files = ['/user/arapat/twitter-sample/tag']
 
-    print "Total words:", get_jsd(files)
+    print get_jsd(files)
 
