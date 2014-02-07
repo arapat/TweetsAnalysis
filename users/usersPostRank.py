@@ -12,7 +12,7 @@ def process_tweet(raw_tweet):
         tweet = json.loads(raw_tweet)
         return (tweet['user']['id'], 1)
     except:
-        return 0
+        return (0, 0)
 
 if __name__ == "__main__":
   sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "UsersPostRank", pyFiles=['usersPostRank.py'])
@@ -25,10 +25,10 @@ if __name__ == "__main__":
   for fnum in range(1, 86):
       file_name = os.path.join(dir_path, 'u' + '%02d' % fnum)
       all_tweets = all_tweets.union(gen_rdd(file_name))
-  all_tweets.reduceByKey(add) \
+  all_tweets = all_tweets.reduceByKey(add) \
           .map(lambda (user, post): (post, 1)) \
           .reduceByKey(add) \
-          .sortByKey()
+          .sortByKey(False)
   for (post, count) in all_tweets.collect():
       print "\t".join([str(post), str(count)])
 
