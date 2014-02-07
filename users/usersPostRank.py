@@ -7,12 +7,14 @@ from pyspark import SparkContext
 def gen_rdd(tweets_file):
     return sc.textFile(tweets_file).map(process_tweet)
 
+
 def process_tweet(raw_tweet):
     try:
         tweet = json.loads(raw_tweet)
         return (tweet['user']['id'], 1)
     except:
         return (0, 0)
+
 
 if __name__ == "__main__":
   sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "UsersPostRank", pyFiles=['usersPostRank.py'])
