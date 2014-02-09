@@ -1,10 +1,10 @@
 # Note that the add operation in K-means algorithm is defined WITHOUT factors
 
-import os
 import json
 from operator import add
 from pyspark import SparkContext
-
+from scipy.sparse import csc_matrix
+from scipy.sparse import dok_matrix
 
 def gen_rdd(tweets_file):
     return sc.textFile(tweets_file).map(process_tweet)
@@ -23,6 +23,9 @@ def process_tweet(raw_data):
 
 def clustering_user(files):
 
+    w_dict = None
+    w_len = 0
+
     def normalize(user):
         uid = user[0]
         counter = float(user[1][0])
@@ -38,26 +41,18 @@ def clustering_user(files):
                 tp = (tokens[i], 1)
         vec.append(tp)
         vec = map(lambda (token, weight): (token, weight / counter), vec)
-        return (uid, counter, vec)
+        return (uid, vec)
 
 
-    def normalize_center(center):
-        uid = center[0]
-        counter = float(center[1][0])
-        vec = sorted(center[1][1])
+    def to_sparse(user):
+        uid = user[0]
+        vec = user[1]
 
-        result = []
-        tp = vec[0]
-        for i in range(1,len(vec)):
-            if tp[0] == vec[i][0]:
-                tp = (tp[0], tp[1] + vec[i][1])
-            else:
-                vec.append(tp)
-                tp = vec[i]
-        vec.append(tp)
-        vec = map(lambda (token, weight): (token, weight / counter), vec)
-        return (uid, (uid, counter, vec))
+        ij = [[w_dict[vec[i][0]] for i in range(len(vec))], [0] * len(vec)]
+        data = [vec[i][1] for i in range(len(vec))]
 
+        return (uid, csc_matrix((data, ij), shape=(w_len, 1)))
+ 
 
     def closestPoint(p, centers):
         bestIndex = 0
@@ -89,38 +84,45 @@ def clustering_user(files):
     all_users = all_users.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1])) \
             .filter(lambda (uid, (counter, tokens)): counter >= MIN_POST)
 
+    # 4606200 words
     all_words = all_users.flatMap(lambda (uid, (counter, tokens)): [(w, 1) for w in tokens]) \
-            .reduceByKey(add).filter(lambda (w, count): count > 1)
+            .reduceByKey(add) \
+            .filter(lambda (w, count): count > 1) \
+            .map(lambda (w, count): w).collect()
+    w_len = len(all_words)
+    w_dict = {all_words[i]: i for i in range(len(all_words))}
 
-    return all_words.count()
+    # Construct features
+    all_users = all_users.map(normalize).map(to_sparse)
 
     # Clustering (k-means)
-    # K = 10
-    # CONVERGE = 0.3
+    K = 10 # 800
+    CONVERGE = 0.3
+    temp_dist = 1.0
+    kPoints = all_users.takeSample(True, K, 1) \
+            .map(lambda (uid, vec): dok_matrix(vec))
 
-    # kPoints = all_users.takeSample(True, K, 1)
-    # temp_dist = 1.0
+    while temp_dist > CONVERGE:
+        closest = data.map(
+            lambda p : (closestPoint(p[1], kPoints), (p[1], 1)))
+        pointStats = closest.reduceByKey(
+            lambda (vec1, counter1), (vec2, counter2): (vec1 + vec2, counter1 + counter2))
+        newPoints = pointStats.map(
+            lambda (cid, (vec, counter)): (cid, vec / counter)).collect()
 
-    # while temp_dist > CONVERGE:
-    #     closest = all_users.map(
-    #         lambda p : (closestPoint(p, kPoints), (1, p[2])))
-    #     newPoints = closest.reduceByKey(
-    #         lambda (counter1, p1), (counter2, p2): (counter1 + counter2, p1 + p2)) \
-    #                 .map(normalize_center).collect()
+        tempDist = sum(np.sum((kPoints[cid] - vec) ** 2) for (cid, vec) in newPoints)
 
-    #     tempDist = sum(diff(kPoints[cid], ctr) for (cid, ctr) in newPoints)
+        for (cid, vec) in newPoints:
+            kPoints[cid] = vec
 
-    #     for (x, y) in newPoints:
-    #         kPoints[x] = y
-
-    # print "Final centers:"
-    # for point in kPoints:
-    #     print point[2]
-    # return all_users.count()
+    print "Final centers:"
+    for point in kPoints:
+        print point
+    return all_users.count()
  
 
 if __name__ == "__main__":
-    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsersTokensCount", pyFiles=['clusteringUsers.py'])
+    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsers", pyFiles=['clusteringUsers.py'])
 
     dir_path = '/user/arapat/twitter-tag/'
     files = [dir_path + 't01', dir_path + 't02']
