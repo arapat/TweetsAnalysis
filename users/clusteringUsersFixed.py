@@ -1,10 +1,14 @@
 # Note that the add operation in K-means algorithm is defined WITHOUT factors
 
 import json
+import os
+import sys
 from operator import add
 from pyspark import SparkContext
+
+import numpy as np
 from scipy.sparse import csc_matrix
-from scipy.sparse import dok_matrix
+# from scipy.sparse import dok_matrix
 
 def gen_rdd(tweets_file):
     return sc.textFile(tweets_file).map(process_tweet)
@@ -25,6 +29,9 @@ def clustering_user(files):
 
     w_dict = None
     w_len = 0
+    kPoints = None
+
+    sqsum = lambda v: np.sum([d * d for d in v.data])
 
     def normalize(user):
         uid = user[0]
@@ -47,22 +54,37 @@ def clustering_user(files):
     def to_sparse(user):
         uid = user[0]
         vec = user[1]
+        # mat = dok_matrix((w_len, 1), dtype = np.float32)
 
-        ij = [[w_dict[vec[i][0]] for i in range(len(vec))], [0] * len(vec)]
-        data = [vec[i][1] for i in range(len(vec))]
+        row = []
+        data = []
+        for i in range(len(vec)):
+            idx = None
+            try:
+                idx = w_dict[vec[i][0]]
+            except:
+                # Do nothing: word appears only once
+                pass
+            if idx:
+                # mat[idx, 0] = vec[i][1]
+                row.append(idx)
+                data.append(vec[i][1])
 
-        return (uid, csc_matrix((data, ij), shape=(w_len, 1)))
- 
+        return (uid, csc_matrix((data, (row, [0] * len(row))), shape=(w_len, 1)))
+        # return (uid, mat)
 
-    def closestPoint(p, centers):
+
+    def closestPoint(user):
+        vec = user[1]
         bestIndex = 0
         closest = float("+inf")
-        for i in range(len(centers)):
-            tempDist = diff(p, centers[i]) # np.sum((p - centers[i]) ** 2)
+        for i in range(len(kPoints)):
+            bestIndex = i
+            tempDist = sqsum(vec - kPoints[i])
             if tempDist < closest:
                 closest = tempDist
                 bestIndex = i
-        return bestIndex
+        return (bestIndex, (vec, 1))
 
 
     if len(files) == 0:
@@ -70,6 +92,7 @@ def clustering_user(files):
 
     # Ignore users that have fewer than MIN_POST tweets
     MIN_POST = 7
+    MIN_OCCURS = 50
 
     # For each account, put all the tokens of its tweets into one vector
     all_users = None
@@ -87,7 +110,7 @@ def clustering_user(files):
     # 4606200 words
     all_words = all_users.flatMap(lambda (uid, (counter, tokens)): [(w, 1) for w in tokens]) \
             .reduceByKey(add) \
-            .filter(lambda (w, count): count > 1) \
+            .filter(lambda (w, count): count >= MIN_OCCURS) \
             .map(lambda (w, count): w).collect()
     w_len = len(all_words)
     w_dict = {all_words[i]: i for i in range(len(all_words))}
@@ -96,36 +119,46 @@ def clustering_user(files):
     all_users = all_users.map(normalize).map(to_sparse)
 
     # Clustering (k-means)
-    K = 10 # 800
+    K = 30
     CONVERGE = 0.3
+    MAXITER = 10
     temp_dist = 1.0
-    kPoints = all_users.takeSample(True, K, 1) \
-            .map(lambda (uid, vec): dok_matrix(vec))
+    kPoints = [vec for (uid, vec) in all_users.takeSample(False, K, 1)]
 
-    while temp_dist > CONVERGE:
-        closest = data.map(
-            lambda p : (closestPoint(p[1], kPoints), (p[1], 1)))
+    iter = 0
+    while temp_dist > CONVERGE and iter < MAXITER:
+        closest = all_users.map(closestPoint)
         pointStats = closest.reduceByKey(
             lambda (vec1, counter1), (vec2, counter2): (vec1 + vec2, counter1 + counter2))
         newPoints = pointStats.map(
             lambda (cid, (vec, counter)): (cid, vec / counter)).collect()
 
-        tempDist = sum(np.sum((kPoints[cid] - vec) ** 2) for (cid, vec) in newPoints)
+        temp_dist = np.sum([sqsum(kPoints[cid] - vec) for (cid, vec) in newPoints])
+        print "Iteration %d:" % (iter + 1), temp_dist
 
         for (cid, vec) in newPoints:
             kPoints[cid] = vec
 
+        iter = iter + 1
+
     print "Final centers:"
     for point in kPoints:
-        print point
+        print "=========="
+        row, col = point.nonzero()
+        for i,j in zip(row, col):
+            print i,j,point[i,j]
+        print "=========="
     return all_users.count()
  
 
 if __name__ == "__main__":
-    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsers", pyFiles=['clusteringUsers.py'])
+    reload(sys)
+    sys.setdefaultencoding('utf8')
+    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsers", pyFiles=['clusteringUsersFixed.py'])
 
     dir_path = '/user/arapat/twitter-tag/'
-    files = [dir_path + 't01', dir_path + 't02']
-    # files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
+    # files = [dir_path + 't01']
+    files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
+    # files = [dir_path + 't%02d' % k for k in range(1, 10)]
     print clustering_user(files)
 
