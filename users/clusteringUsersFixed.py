@@ -129,7 +129,8 @@ def clustering_user(files):
     while temp_dist > CONVERGE and iter < MAXITER:
         closest = all_users.map(closestPoint)
         pointStats = closest.reduceByKey(
-            lambda (vec1, counter1), (vec2, counter2): (vec1 + vec2, counter1 + counter2))
+            lambda (vec1, counter1), (vec2, counter2): (vec1 + vec2, counter1 + counter2), 
+            numPartitions=840)
         newPoints = pointStats.map(
             lambda (cid, (vec, counter)): (cid, vec / counter)).collect()
 
@@ -154,7 +155,7 @@ def clustering_user(files):
 if __name__ == "__main__":
     reload(sys)
     sys.setdefaultencoding('utf8')
-    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsers", pyFiles=['clusteringUsersFixed.py'])
+    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsersPartitions", pyFiles=['clusteringUsersFixed-prt.py'])
 
     dir_path = '/user/arapat/twitter-tag/'
     # files = [dir_path + 't01']
