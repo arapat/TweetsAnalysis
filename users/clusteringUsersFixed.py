@@ -79,37 +79,51 @@ def clustering_user(files):
         bestIndex = 0
         closest = float("+inf")
         for i in range(len(kPoints)):
-            bestIndex = i
             tempDist = sqsum(vec - kPoints[i])
             if tempDist < closest:
                 closest = tempDist
                 bestIndex = i
-        return (bestIndex, (vec, 1))
+        # return (bestIndex, (vec, 1))
+        return (bestIndex, (vec, 1, user[0]))
 
+
+    def closestDist(user):
+        vec = user[1]
+        bestIndex = 0
+        closest = float("+inf")
+        dist = []
+        for i in range(len(kPoints)):
+            tempDist = sqsum(vec - kPoints[i])
+            dist.append((i, tempDist))
+        return (user[0], dist)
 
     if len(files) == 0:
         return 0
 
     # Ignore users that have fewer than MIN_POST tweets
-    MIN_POST = 7
-    MIN_OCCURS = 50
+    # MIN_POST = 7
+    # MIN_OCCURS = 50
+    MIN_POST = 0
+    MIN_OCCURS = 0
 
     # For each account, put all the tokens of its tweets into one vector
     all_users = None
     for file_name in files:
+        print file_name
         users = gen_rdd(file_name)
+        print 'users:', users.count()
         if all_users:
             all_users = all_users.union(users)
         else:
             all_users = users
 
     # Normalize the vector
-    all_users = all_users.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1])) \
+    all_users = all_users.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1]), numPartitions = 64) \
             .filter(lambda (uid, (counter, tokens)): counter >= MIN_POST)
 
     # 4606200 words
     all_words = all_users.flatMap(lambda (uid, (counter, tokens)): [(w, 1) for w in tokens]) \
-            .reduceByKey(add) \
+            .reduceByKey(add, numPartitions = 64) \
             .filter(lambda (w, count): count >= MIN_OCCURS) \
             .map(lambda (w, count): w).collect()
     w_len = len(all_words)
@@ -120,7 +134,7 @@ def clustering_user(files):
 
     # Clustering (k-means)
     K = 30
-    CONVERGE = 0.3
+    CONVERGE = 0.1
     MAXITER = 10
     temp_dist = 1.0
     kPoints = [vec for (uid, vec) in all_users.takeSample(False, K, 1)]
@@ -129,10 +143,11 @@ def clustering_user(files):
     while temp_dist > CONVERGE and iter < MAXITER:
         closest = all_users.map(closestPoint)
         pointStats = closest.reduceByKey(
-            lambda (vec1, counter1), (vec2, counter2): (vec1 + vec2, counter1 + counter2), 
-            numPartitions=840)
+            lambda (vec1, counter1, uid1), (vec2, counter2, uid2): (vec1 + vec2, counter1 + counter2, uid))
+            # lambda (vec1, counter1), (vec2, counter2): (vec1 + vec2, counter1 + counter2)) #,
+            # numPartitions=840)
         newPoints = pointStats.map(
-            lambda (cid, (vec, counter)): (cid, vec / counter)).collect()
+            lambda (cid, (vec, counter, uid)): (cid, vec / counter)).collect()
 
         temp_dist = np.sum([sqsum(kPoints[cid] - vec) for (cid, vec) in newPoints])
         print "Iteration %d:" % (iter + 1), temp_dist
@@ -149,17 +164,49 @@ def clustering_user(files):
         for i,j in zip(row, col):
             print i,j,point[i,j]
         print "=========="
+    print "w_len =", w_len
+
+    print "Users:"
+    for user in all_users.collect():
+        print "=========="
+        print "id:", user[0]
+        row, col = user[1].nonzero()
+        for i, j in zip(row, col):
+            print i,j,user[1][i,j]
+        print "=========="
+
+    new_kPoints = [] 
+    for point in kPoints:
+        row, col = point.nonzero()
+        data = [point[i, j] for i,j in zip(row, col)]
+        new_kPoints.append(csc_matrix((data, (row, [0] * len(row))), shape=(w_len, 1)))
+
+    kPoints = new_kPoints
+
+    print '\n\nSample data'
+    dist = all_users.map(closestDist)
+    print dist.take(10)
+
+    print '\n\nSize of each group:'
+    closest = all_users.map(closestPoint).cache()
+    for i in range(30):
+        # print "Group %02d count =" % i, closest.filter(lambda (index, others): index == i).count()
+        print "Group %02d" % i
+        # print closest.filter(lambda (index, others): index == i).collect()
+        print [t[1][2] for t in closest.filter(lambda (index, others): index == i).collect()]
+
     return all_users.count()
  
 
 if __name__ == "__main__":
     reload(sys)
     sys.setdefaultencoding('utf8')
-    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsersPartitions", pyFiles=['clusteringUsersFixed-prt.py'])
+    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsersPartitions", pyFiles=['clusteringUsersFixed.py'])
 
     dir_path = '/user/arapat/twitter-tag/'
+    files = ['/user/arapat/twitter-sample/tag100']
     # files = [dir_path + 't01']
-    files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
+    # files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
     # files = [dir_path + 't%02d' % k for k in range(1, 10)]
     print clustering_user(files)
 

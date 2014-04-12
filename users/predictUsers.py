@@ -6,9 +6,9 @@ import sys
 from operator import add
 from pyspark import SparkContext
 
-from nltk.corpus import stopwords
 import numpy as np
 from scipy.sparse import csc_matrix
+# from scipy.sparse import dok_matrix
 
 def gen_rdd(tweets_file):
     return sc.textFile(tweets_file).map(process_tweet)
@@ -25,7 +25,7 @@ def process_tweet(raw_data):
         return (0, (0, []))
 
 
-def predict_users(files):
+def clustering_user(files):
 
     w_dict = None
     w_len = 0
@@ -34,13 +34,13 @@ def predict_users(files):
     sqsum = lambda v: np.sum([d * d for d in v.data])
 
     def get_centers(K):
-        file_path = ""
-        f = open("result-prt.txt")
-        for i in range(3):
+        file_path = "/oasis/projects/nsf/csd181/arapat/project/twitter/scripts/users/centers.txt"
+        f = open(file_path)
+        for i in range(6):
             f.readline()
         separate = f.readline().strip()
         centers = []
-        for i in range(30):
+        for i in range(K):
             row = []
             data = []
             raw = f.readline()
@@ -52,7 +52,6 @@ def predict_users(files):
             centers.append(csc_matrix((data, (row, [0] * len(row))), shape=(w_len, 1)))
             f.readline()
         return centers
-
 
     def normalize(user):
         uid = user[0]
@@ -75,6 +74,7 @@ def predict_users(files):
     def to_sparse(user):
         uid = user[0]
         vec = user[1]
+        # mat = dok_matrix((w_len, 1), dtype = np.float32)
 
         row = []
         data = []
@@ -86,32 +86,46 @@ def predict_users(files):
                 # Do nothing: word appears only once
                 pass
             if idx:
+                # mat[idx, 0] = vec[i][1]
                 row.append(idx)
                 data.append(vec[i][1])
 
         return (uid, csc_matrix((data, (row, [0] * len(row))), shape=(w_len, 1)))
+        # return (uid, mat)
 
 
     def closestPoint(user):
-        uid = user[0]
         vec = user[1]
         bestIndex = 0
         closest = float("+inf")
         for i in range(len(kPoints)):
-            bestIndex = i
             tempDist = sqsum(vec - kPoints[i])
+            print "****** (", user[0], i, ")", tempDist
             if tempDist < closest:
                 closest = tempDist
                 bestIndex = i
-        return (uid, bestIndex)
+        # return (bestIndex, (vec, 1))
+        return (bestIndex, (vec, 1, user[0]))
 
+
+    def closestDist(user):
+        vec = user[1]
+        bestIndex = 0
+        closest = float("+inf")
+        dist = []
+        for i in range(len(kPoints)):
+            tempDist = sqsum(vec - kPoints[i])
+            dist.append((i, tempDist))
+        return (user[0], dist)
 
     if len(files) == 0:
         return 0
 
     # Ignore users that have fewer than MIN_POST tweets
-    MIN_POST = 7
-    MIN_OCCURS = 50
+    # MIN_POST = 7
+    # MIN_OCCURS = 50
+    MIN_POST = 0
+    MIN_OCCURS = 0
 
     # For each account, put all the tokens of its tweets into one vector
     all_users = None
@@ -123,58 +137,70 @@ def predict_users(files):
             all_users = users
 
     # Normalize the vector
-    all_users = all_users.reduceByKey( \
-            lambda a, b: (a[0] + b[0], a[1] + b[1]), numPartitions = 840) \
-            .filter(lambda (uid, (counter, tokens)): counter >= MIN_POST) \
-            .cache()
+    all_users = all_users.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1]), numPartitions = 64) \
+            .filter(lambda (uid, (counter, tokens)): counter >= MIN_POST)
 
     # 4606200 words
     all_words = all_users.flatMap(lambda (uid, (counter, tokens)): [(w, 1) for w in tokens]) \
-            .reduceByKey(add, numPartitions=840) \
+            .reduceByKey(add, numPartitions = 64) \
             .filter(lambda (w, count): count >= MIN_OCCURS) \
             .map(lambda (w, count): w).collect()
     w_len = len(all_words)
     w_dict = {all_words[i]: i for i in range(len(all_words))}
 
     # Construct features
-    vec_users = all_users.map(normalize).map(to_sparse)
+    all_users = all_users.map(normalize).map(to_sparse)
 
-    # Predicting (k-means)
+    # Clustering (k-means)
     K = 30
+    CONVERGE = 0.1
+    MAXITER = 10
+    temp_dist = 1.0
     kPoints = get_centers(K)
 
-    closest = vec_users.map(closestPoint).join(all_users).cache()
-    all_users.unpersist()
+    print "Final centers:"
+    for point in kPoints:
+        print "=========="
+        row, col = point.nonzero()
+        for i,j in zip(row, col):
+            print i,j,point[i,j]
+        print "=========="
+    print "w_len =", w_len
 
-    print "Top 1000 active users"
+    print "Users:"
+    for user in all_users.collect():
+        print "=========="
+        print "id:", user[0]
+        row, col = user[1].nonzero()
+        for i, j in zip(row, col):
+            print i,j,user[1][i,j]
+        print "=========="
+
+    print '\n\nSample data'
+    dist = all_users.map(closestDist)
+    print dist.take(10)
+    # print '583408765', dist.filter(lambda (a, b): a == 583408765).collect()
+
+    print '\n\nSize of each group:'
+    closest = all_users.map(closestPoint).cache()
     for i in range(30):
-        print "===== Center %2d =====" % i
-        print closest.filter(lambda (uid, cid, (counter, tokens)): cid == i) \
-                .map(lambda (uid, cid, (counter, tokens)): (counter, uid)) \
-                .sortByKey(False, numPartitions = 840) \
-                .take(1000)
+        # print "Group %02d count =" % i, closest.filter(lambda (index, others): index == i).count()
+        print "Group %02d" % i
+        # print closest.filter(lambda (index, others): index == i).collect()
+        print [t[1][2] for t in closest.filter(lambda (index, others): index == i).collect()]
 
-    stop_words = stopwords.words('english')
-    print "\n\nTop 1000 frequently-used words"
-    for i in range(30):
-        print "===== Center %2d =====" % i
-        print closest.filter(lambda (uid, cid, (counter, tokens)): cid == i) \
-                .flatMap(lambda (uid, cid, (counter, tokens)): [(w, 1) for w in tokens if w not in stop_words]) \
-                .reduceByKey(add, numPartitions = 840) \
-                .map(lambda (token, count): (count, token)) \
-                .sortByKey(False, numPartitions = 840) \
-                .take(1000)
-
-    return closest.count()
+    return all_users.count()
+ 
 
 if __name__ == "__main__":
     reload(sys)
     sys.setdefaultencoding('utf8')
-    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "PredictUsers", pyFiles=['predictUsers.py'])
+    sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsersPartitions", pyFiles=['clusteringUsersFixed.py'])
 
     dir_path = '/user/arapat/twitter-tag/'
+    files = ['/user/arapat/twitter-sample/tag100']
     # files = [dir_path + 't01']
-    files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
+    # files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
     # files = [dir_path + 't%02d' % k for k in range(1, 10)]
-    print predict_users(files)
+    print clustering_user(files)
 
