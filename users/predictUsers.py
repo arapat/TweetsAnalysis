@@ -36,7 +36,8 @@ def clustering_user(files):
     def get_centers(K):
         file_path = "/oasis/projects/nsf/csd181/arapat/project/twitter/scripts/users/centers.txt"
         f = open(file_path)
-        for i in range(6):
+        # Skip irrelevant lines
+        for i in range(5):
             f.readline()
         separate = f.readline().strip()
         centers = []
@@ -74,7 +75,6 @@ def clustering_user(files):
     def to_sparse(user):
         uid = user[0]
         vec = user[1]
-        # mat = dok_matrix((w_len, 1), dtype = np.float32)
 
         row = []
         data = []
@@ -83,15 +83,13 @@ def clustering_user(files):
             try:
                 idx = w_dict[vec[i][0]]
             except:
-                # Do nothing: word appears only once
+                # Do nothing: filter out word appears infrequently
                 pass
             if idx:
-                # mat[idx, 0] = vec[i][1]
                 row.append(idx)
                 data.append(vec[i][1])
 
         return (uid, csc_matrix((data, (row, [0] * len(row))), shape=(w_len, 1)))
-        # return (uid, mat)
 
 
     def closestPoint(user):
@@ -100,23 +98,11 @@ def clustering_user(files):
         closest = float("+inf")
         for i in range(len(kPoints)):
             tempDist = sqsum(vec - kPoints[i])
-            print "****** (", user[0], i, ")", tempDist
             if tempDist < closest:
                 closest = tempDist
                 bestIndex = i
-        # return (bestIndex, (vec, 1))
         return (bestIndex, (vec, 1, user[0]))
 
-
-    def closestDist(user):
-        vec = user[1]
-        bestIndex = 0
-        closest = float("+inf")
-        dist = []
-        for i in range(len(kPoints)):
-            tempDist = sqsum(vec - kPoints[i])
-            dist.append((i, tempDist))
-        return (user[0], dist)
 
     if len(files) == 0:
         return 0
@@ -145,6 +131,7 @@ def clustering_user(files):
             .reduceByKey(add, numPartitions = 64) \
             .filter(lambda (w, count): count >= MIN_OCCURS) \
             .map(lambda (w, count): w).collect()
+    all_words = sorted(all_words)
     w_len = len(all_words)
     w_dict = {all_words[i]: i for i in range(len(all_words))}
 
@@ -158,35 +145,19 @@ def clustering_user(files):
     temp_dist = 1.0
     kPoints = get_centers(K)
 
-    print "Final centers:"
-    for point in kPoints:
-        print "=========="
-        row, col = point.nonzero()
-        for i,j in zip(row, col):
-            print i,j,point[i,j]
-        print "=========="
-    print "w_len =", w_len
+    # print "Final centers:"
+    # for point in kPoints:
+    #     print "=========="
+    #     row, col = point.nonzero()
+    #     for i,j in zip(row, col):
+    #         print i,j,point[i,j]
+    #     print "=========="
+    # print "w_len =", w_len
 
-    print "Users:"
-    for user in all_users.collect():
-        print "=========="
-        print "id:", user[0]
-        row, col = user[1].nonzero()
-        for i, j in zip(row, col):
-            print i,j,user[1][i,j]
-        print "=========="
-
-    print '\n\nSample data'
-    dist = all_users.map(closestDist)
-    print dist.take(10)
-    # print '583408765', dist.filter(lambda (a, b): a == 583408765).collect()
-
-    print '\n\nSize of each group:'
+    print 'Size of each group:'
     closest = all_users.map(closestPoint).cache()
     for i in range(30):
-        # print "Group %02d count =" % i, closest.filter(lambda (index, others): index == i).count()
         print "Group %02d" % i
-        # print closest.filter(lambda (index, others): index == i).collect()
         print [t[1][2] for t in closest.filter(lambda (index, others): index == i).collect()]
 
     return all_users.count()
@@ -202,5 +173,5 @@ if __name__ == "__main__":
     # files = [dir_path + 't01']
     # files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
     # files = [dir_path + 't%02d' % k for k in range(1, 10)]
-    print clustering_user(files)
+    print " ".join(["All users:", str(clustering_user(files))])
 
