@@ -37,7 +37,7 @@ def clustering_user(files):
         file_path = "/oasis/projects/nsf/csd181/arapat/project/twitter/scripts/users/centers.txt"
         f = open(file_path)
         # Skip irrelevant lines
-        for i in range(5):
+        for i in range(10):
             f.readline()
         separate = f.readline().strip()
         centers = []
@@ -108,10 +108,9 @@ def clustering_user(files):
         return 0
 
     # Ignore users that have fewer than MIN_POST tweets
-    # MIN_POST = 7
+    MIN_POST = 7
     # MIN_OCCURS = 50
-    MIN_POST = 0
-    MIN_OCCURS = 0
+    MIN_OCCURS = 10000
 
     # For each account, put all the tokens of its tweets into one vector
     all_users = None
@@ -169,9 +168,9 @@ if __name__ == "__main__":
     sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsersPartitions", pyFiles=['clusteringUsersFixed.py'])
 
     dir_path = '/user/arapat/twitter-tag/'
-    files = ['/user/arapat/twitter-sample/tag100']
-    # files = [dir_path + 't01']
-    # files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
+    # files = ['/user/arapat/twitter-sample/tag100']
+    files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
     # files = [dir_path + 't%02d' % k for k in range(1, 10)]
-    print " ".join(["All users:", str(clustering_user(files))])
+    # print " ".join(["All users:", str(clustering_user(files))])
+    print clustering_user(files)
 

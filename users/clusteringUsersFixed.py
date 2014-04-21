@@ -31,7 +31,7 @@ def clustering_user(files):
     w_len = 0
     kPoints = None
 
-    sqsum = lambda v: np.sum([d * d for d in v.data])
+    sqsum = lambda v: np.sum(v.data * v.data)
 
     def normalize(user):
         uid = user[0]
@@ -88,10 +88,10 @@ def clustering_user(files):
         return 0
 
     # Ignore users that have fewer than MIN_POST tweets
-    # MIN_POST = 7
-    # MIN_OCCURS = 50
-    MIN_POST = 0
-    MIN_OCCURS = 0
+    MIN_POST = 7
+    MIN_OCCURS = 10000
+    # MIN_POST = 0
+    # MIN_OCCURS = 0
 
     # For each account, put all the tokens of its tweets into one vector
     all_users = None
@@ -103,20 +103,22 @@ def clustering_user(files):
             all_users = users
 
     # Normalize the vector
-    all_users = all_users.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1]), numPartitions = 64) \
+    all_users = all_users.reduceByKey(lambda a, b: (a[0] + b[0], a[1] + b[1]), numPartitions = 480) \
             .filter(lambda (uid, (counter, tokens)): counter >= MIN_POST)
 
     # 4606200 words
     all_words = all_users.flatMap(lambda (uid, (counter, tokens)): [(w, 1) for w in tokens]) \
-            .reduceByKey(add, numPartitions = 64) \
+            .reduceByKey(add, numPartitions = 240) \
             .filter(lambda (w, count): count >= MIN_OCCURS) \
             .map(lambda (w, count): w).collect()
     all_words = sorted(all_words)
     w_len = len(all_words)
     w_dict = {all_words[i]: i for i in range(len(all_words))}
 
+    print w_len
+
     # Construct features
-    all_users = all_users.map(normalize).map(to_sparse)
+    all_users = all_users.map(normalize).map(to_sparse).cache()
 
     # Clustering (k-means)
     K = 30
@@ -130,7 +132,7 @@ def clustering_user(files):
         closest = all_users.map(closestPoint)
         pointStats = closest.reduceByKey(
             lambda (vec1, counter1), (vec2, counter2): (vec1 + vec2, counter1 + counter2), \
-            numPartitions=840)
+            numPartitions = 480)
         newPoints = pointStats.map(
             lambda (cid, (vec, counter)): (cid, vec / counter)).collect()
 
@@ -166,9 +168,9 @@ if __name__ == "__main__":
     sc = SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsersPartitions", pyFiles=['clusteringUsersFixed.py'])
 
     dir_path = '/user/arapat/twitter-tag/'
-    files = ['/user/arapat/twitter-sample/tag100']
+    # files = ['/user/arapat/twitter-sample/tag100']
     # files = [dir_path + 't01']
-    # files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
-    # files = [dir_path + 't%02d' % k for k in range(1, 10)]
+    # files = [dir_path + 't%02d' % k for k in range(1, 11)]
+    files = [dir_path + 't%02d' % k for k in range(1, 71)] + [dir_path + 'u%02d' % k for k in range(1,86)]
     print " ".join(["All users:", str(clustering_user(files))])
 
