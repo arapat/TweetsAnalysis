@@ -9,40 +9,45 @@ import org.json4s.native.JsonMethods
 
 object SparkKMeans {
 
+    implicit val formats = DefaultFormats
+
     def genRdd(tweetsFile: String, sc: SparkContext) = {
         sc.textFile(tweetsFile).map(processTweet)
     }
 
     def processTweet(rawData: String) : (Int, Array[String]) = {
         try {
-            rawData = raw_data.split('\t')
-            val rawJson = JsonMethods.parse(rawData(3))
-            val uid = (rawJson \ "user" \ "id").values
-            val tokens = rawData(0).split(' ').map(_.trim)
-            return (uid, tokens)
+            val rawDataArray = rawData.split('\t')
+            val rawJson = JsonMethods.parse(rawDataArray(3))
+            val uid = (rawJson \ "user" \ "id").extract[Int]
+            val tokens = rawDataArray(0).split(' ').map(_.trim)
+            return (uid.toInt, tokens)
         } catch {
-            case _ => // broken tweets
+            case _: Throwable => // broken tweets
                 return (0, Array())
         }
     }
 
     def normalize(user: (Int, (Int, Array[String]))) = {
-        val tokenSet = user.tokens.toSet
-        val tokenPairs = tokenSet.map(x => (x, user.tokens.count(_ == x)))
-            .map(tp => (tp._1, tp._2 / user.counter.toFloat)).toArray
-        (user.uid, tokenPairs)
+        val tokenSet = user._2._2.toSet
+        val tokenPairs = tokenSet.map(x => (x, user._2._2.count(_ == x)))
+            .map(pair => (pair._1, pair._2 / user._2._1.toDouble)).toArray
+        (user._1, tokenPairs)
     }
 
-    def toSparse(user: (Int, Array[String]), dict: Map[String, Int]) = {
-        val seq = user.tokens
-            .map(tp => (dict.get(tp._1), tp._2))
-            .filter(elm => elm._1 != None).sorted
-        val vector = SparseVector(
-            seq.map(elm => elm._1), seq.map(elm => elm._2), dict.size)
-        (user.uid, vector)
+    def toSparse(dict: Map[String, Int])(user: (Int, Array[(String, Double)])): (Int, SparseVector[Double]) = {
+        val seq = user._2
+            .map(pair => (dict.getOrElse(pair._1, -1), pair._2))
+            .filter(elm => elm._1 >= 0).sorted
+        val vector: SparseVector[Double] = SparseVector[Double](dict.size)()
+        for (i <- 0 until seq.length) {
+            vector(seq(i)._1) = seq(i)._2
+        }
+
+        (user._1, vector)
     }
 
-    def closestPoint(p: SparseVector[Double], centers: Array[Vector[Double]]): Int = {
+    def closestPoint(p: SparseVector[Double], centers: Array[SparseVector[Double]]): Int = {
         var index = 0
         var bestIndex = 0
         var closest = Double.PositiveInfinity
@@ -69,40 +74,41 @@ object SparkKMeans {
         // val MIN_OCCURS = 0
 
         val rawUsers = files.map(genRdd(_, sc))
-        var allUsers = rawUsers(0)
+        var unionUsers = rawUsers(0)
         for (i <- 1 until rawUsers.length) {
-            allUsers = allUsers.union(rawUsers(i)) 
+            unionUsers = unionUsers.union(rawUsers(i))
         }
 
-        // Normalize the vector
-        allUsers = allUsers.map((uid, tokens) => (uid, (1, tokens)))
-            .reduceByKey {case ((x1, y1), (x2, y2)) => (x1 + x2, y1 + y2)}
+        val userAndTokens = unionUsers
+            .map {case (uid, tokens) => (uid, (1, tokens))}
+            .reduceByKey {case ((x1, y1), (x2, y2)) => (x1 + x2, y1 ++ y2)}
             .filter {case (uid, (counter, tokens)) => counter >= MIN_POST}
 
-        allWords = allUsers.flatMap {case (uid, (counter, tokens)) => tokens.map((_, 1))}
+        val allWords = userAndTokens
+            .flatMap {case (uid, (counter, tokens)) => tokens.map((_, 1))}
             .reduceByKey(_ + _)
             .filter {case (token, counter) => counter >= MIN_OCCURS}
             .map {case (token, counter) => token}
-            .collect()
-        allWords = allWords.sorted
-        dict = {for (i <- 0 until allWords.length) yield (i, allWords(i))}.toMap
+            .collect().sorted
+        val dict = {for (i <- 0 until allWords.length) yield (allWords(i), i)}.toMap
 
         // Construct features
-        allUsers = allUsers.map(normalize).map(toSparse).cache()
+        val toSparseFunc = toSparse(dict)(_)
+        val allVectors = userAndTokens.map(normalize).map(toSparseFunc).cache
 
         // Clustering (k-means)
         val K = 30
         val CONVERGE = 0.1
         val MAX_ITER = 10
         var tempDist = 1.0
-        val kPoints = allUsers.takeSample(withReplacement = false, K, 42)
+        val kPoints = allVectors.takeSample(withReplacement = false, K, 42)
             .map {case (uid, vector) => vector}
             .toArray
 
         var iter = 0
-        while(tempDist > convergeDist && iter < MAX_ITER) {
+        while(tempDist > CONVERGE && iter < MAX_ITER) {
 
-            val closest = allUsers.map {case (uid, p) => (closestPoint(p, kPoints), (p, 1))}
+            val closest = allVectors.map {case (uid, p) => (closestPoint(p, kPoints), (p, 1))}
 
             val pointStats = closest.reduceByKey {case ((x1, y1), (x2, y2)) => (x1 + x2, y1 + y2)}
 
@@ -111,7 +117,7 @@ object SparkKMeans {
 
             tempDist = 0.0 
             for (i <- 0 until K) {
-                tempDist += squaredDistance(kPoints(i) - newPoints(i))
+                tempDist += squaredDistance(kPoints(i), newPoints(i))
             }
 
             for (newP <- newPoints) {

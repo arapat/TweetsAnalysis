@@ -13,7 +13,7 @@ resolvers ++= Seq(
 libraryDependencies ++= Seq(
             "org.json4s" %% "json4s-native" % "3.2.8",
             "org.apache.spark" %% "spark-core" % "0.9.1", 
-            "org.scalanlp" % "breeze_2.10" % "0.7",
-            "org.scalanlp" % "breeze-natives_2.10" % "0.7"
+            "org.scalanlp" % "breeze_2.10" % "0.8-SNAPSHOT",
+            "org.scalanlp" % "breeze-natives_2.10" % "0.8-SNAPSHOT"
 )
 
