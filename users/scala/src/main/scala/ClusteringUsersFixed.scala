@@ -1,13 +1,14 @@
 
 import breeze.linalg.{Vector, SparseVector, squaredDistance}
 
+import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext._
 import org.json4s._
 import org.json4s.native.JsonMethods
 
 
-object SparkKMeans {
+object ClusteringUsersFixed {
 
     implicit val formats = DefaultFormats
 
@@ -70,8 +71,6 @@ object SparkKMeans {
         // Ignore users that have fewer than MIN_POST tweets
         val MIN_POST = 7
         val MIN_OCCURS = 10000
-        // val MIN_POST = 0
-        // val MIN_OCCURS = 0
 
         val rawUsers = files.map(genRdd(_, sc))
         var unionUsers = rawUsers(0)
@@ -81,12 +80,13 @@ object SparkKMeans {
 
         val userAndTokens = unionUsers
             .map {case (uid, tokens) => (uid, (1, tokens))}
-            .reduceByKey {case ((x1, y1), (x2, y2)) => (x1 + x2, y1 ++ y2)}
+            .reduceByKey(
+                (a: (Int, Array[String]), b: (Int, Array[String])) => (a._1 + b._1, a._2 ++ b._2), 240)
             .filter {case (uid, (counter, tokens)) => counter >= MIN_POST}
 
         val allWords = userAndTokens
             .flatMap {case (uid, (counter, tokens)) => tokens.map((_, 1))}
-            .reduceByKey(_ + _)
+            .reduceByKey(_ + _, 240)
             .filter {case (token, counter) => counter >= MIN_OCCURS}
             .map {case (token, counter) => token}
             .collect().sorted
@@ -110,7 +110,8 @@ object SparkKMeans {
 
             val closest = allVectors.map {case (uid, p) => (closestPoint(p, kPoints), (p, 1))}
 
-            val pointStats = closest.reduceByKey {case ((x1, y1), (x2, y2)) => (x1 + x2, y1 + y2)}
+            val pointStats = closest.reduceByKey(
+                (a: (SparseVector[Double], Int), b: (SparseVector[Double], Int)) => (a._1 + b._1, a._2 + b._2), 240)
 
             val newPoints = pointStats.map {pair =>
                 (pair._1, pair._2._1 * (1.0 / pair._2._2))}.collectAsMap()
@@ -130,33 +131,27 @@ object SparkKMeans {
 
         println("Final centers:")
         kPoints.foreach(println)
-        // for point in kPoints:
-        // print "=========="
-        // row, col = point.nonzero()
-        // for i,j in zip(row, col):
-        // print i,j,point[i,j]
-        // print "=========="
-        // print "w_len =", w_len
-
-        // print '\n\nSize of each group:'
-        // closest = all_users.map(closestPoint).cache()
-        // for i in range(30):
-        //     print "Group %02d" % i
-        //     print [t[1][2] for t in closest.filter(lambda (index, others): index == i).collect()]
-
-        // return all_users.count()
     }
 
 
     def main(args: Array[String]) {
-        val sc = new SparkContext("spark://ion-21-14.sdsc.edu:7077", "ClusteringUsers",
-              System.getenv("SPARK_HOME"), SparkContext.jarOfClass(this.getClass).toSeq)
-        
-        val dirPath = "/user/arapat/twitter-tag/"
-        // val files =
-        //     {for (i <- 1 to 70) yield dirPath + "t%02d".format(i)}
-        //     ++ {for (i <- 1 to 85) yield dirPath + "u%02d".format(i)}
-        val files = Array(dirPath + "t02d".format(1))
+        val conf = new SparkConf()
+            .setMaster("spark://ion-21-14.sdsc.edu:7077")
+            .setAppName("ClusteringUsers")
+            .setSparkHome(System.getenv("SPARK_HOME"))
+            .setJars(Array("target/scala-2.10/clusteringusers_2.10-0.1.jar",
+                "lib_managed/jars/org.json4s/json4s-core_2.10/json4s-core_2.10-3.2.8.jar",
+                "lib_managed/jars/org.json4s/json4s-native_2.10/json4s-native_2.10-3.2.8.jar",
+                "lib_managed/jars/org.json4s/json4s-ast_2.10/json4s-ast_2.10-3.2.8.jar",
+                "lib_managed/jars/org.scalanlp/breeze_2.10/breeze_2.10-0.8-SNAPSHOT.jar",
+                "lib_managed/jars/org.scalanlp/breeze-natives_2.10/breeze-natives_2.10-0.8-SNAPSHOT.jar"))
+            .set("spark.executor.memory", "30g")
+        val sc = new SparkContext(conf)
+
+        val dirPath = "hdfs://ion-21-14.ibnet0:54310/user/arapat/twitter-tag/"
+        val files1 = {for (i <- 1 to 70) yield dirPath + "t%02d".format(i)}.toArray
+        val files2 = {for (i <- 1 to 85) yield dirPath + "u%02d".format(i)}.toArray
+        val files = (files1 ++ files2) // Array(dirPath + "t%02d".format(2))
         clusteringUser(sc, files)
     }
 }
