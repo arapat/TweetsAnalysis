@@ -36,7 +36,7 @@ object ClusteringUsersFixed {
         (user._1, tokenPairs)
     }
 
-    def toSparse(dict: Map[String, Int])(user: (Int, Array[(String, Double)])): (Int, SparseVector[Double]) = {
+    def toSparse(dict: Map[String, Int], user: (Int, Array[(String, Double)])): (Int, SparseVector[Double]) = {
         val seq = user._2
             .map(pair => (dict.getOrElse(pair._1, -1), pair._2))
             .filter(elm => elm._1 >= 0).sorted
@@ -93,8 +93,7 @@ object ClusteringUsersFixed {
         val dict = {for (i <- 0 until allWords.length) yield (allWords(i), i)}.toMap
 
         // Construct features
-        val toSparseFunc = toSparse(dict)(_)
-        val allVectors = userAndTokens.map(normalize).map(toSparseFunc).cache
+        val allVectors = userAndTokens.map(normalize).map(toSparse(dict, _)).cache
 
         // Clustering (k-means)
         val K = 30

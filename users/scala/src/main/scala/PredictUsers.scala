@@ -10,7 +10,7 @@ import org.json4s._
 import org.json4s.native.JsonMethods
 
 
-object ClusteringUsersFixed {
+object PredictUsers {
 
     implicit val formats = DefaultFormats
 
@@ -21,18 +21,26 @@ object ClusteringUsersFixed {
     }
 
     def getVectorElements(raw: String) = {
-        val trimed = raw.drop(tuples.indexOf('(') + 1).dropRight(1)
+        val trimed = raw.drop(raw.indexOf('(') + 1).dropRight(1)
         val tuples = trimed.split(", ")
         tuples.map(stringToTuple)
     }
 
-    def getCenters(numOfCenters: Int) = {
-        val filePath = "/oasis/projects/nsf/csd181/arapat/project/twitter/scripts/users/centers.txt"
-        val raw = Source.fromFile(filePath).getLines
+    def getSparseVector(dictSize: Int, vectorElements: Array[(Int, Double)]) = {
+        val vector = SparseVector[Double](dictSize)()
+        for (i <- 0 until vectorElements.length) {
+            vector(vectorElements(i)._1) = vectorElements(i)._2
+        }
+        vector
+    }
+
+    def getCenters(numOfCenters: Int, dictSize: Int) = {
+        val filePath = "/oasis/projects/nsf/csd181/arapat/project/twitter/scripts/users/scala/centers.txt"
+        val raw = Source.fromFile(filePath).getLines.toArray
         assert(raw.length == numOfCenters)
 
         val vectorElements = raw.map(getVectorElements)
-        vectorElements.map(SparseVector(dict.size, _.unzip))
+        vectorElements.map(getSparseVector(dictSize, _))
     }
 
     def genRdd(tweetsFile: String, sc: SparkContext) = {
@@ -121,10 +129,14 @@ object ClusteringUsersFixed {
 
         // Prediction (k-means)
         val K = 30
-        val kPoints = getCenters(K)
-        val closest = allVectors.map {case (uid, p) => (closestPoint(p, kPoints), Array(uid))}
+        val kPoints = getCenters(K, dict.size)
+        val closest = allVectors.map {case (uid, p) => (closestPoint(p, kPoints.toArray), Array(uid))}
         val prediction = closest.reduceByKey(_ ++ _).collect()
-        prediction.foreach(println)
+        prediction.foreach((cluster: (Int, Array[Int])) => {
+            println(cluster._1) 
+            cluster._2.foreach((p: Int) => print(" " + p))
+            println
+        })
     }
 
 
