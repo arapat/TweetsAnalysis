@@ -10,7 +10,7 @@ import org.json4s._
 import org.json4s.native.JsonMethods
 
 
-object PredictUsers {
+object AnalyzeResult {
 
     implicit val formats = DefaultFormats
 
@@ -24,7 +24,7 @@ object PredictUsers {
         val trimed = raw.drop(raw.indexOf('(') + 1).dropRight(1)
         val strTuples = trimed.split(", ")
         val tuples = strTuples.map(stringToTuple)
-        tuples.sorted(_._2)
+        tuples.sortBy(_._2)
     }
 
     // def getSparseVector(dictSize: Int, vectorElements: Array[(Int, Double)]) = {
@@ -132,11 +132,12 @@ object PredictUsers {
         // Prediction (k-means)
         val K = 30
         val kPoints = getCenters(K, dict.size)
-        kPoints.foreach((center: Array[Int, Double]) => {
+        kPoints.foreach((center: Array[(Int, Double)]) => {
             println("========================")
             center.slice(0, 20)
-                  .map(dict(_._1))
-                  .foreach(token: String => print(' ' + token))
+                  .map((tokenPair: (Int, Double)) => dict(tokenPair._1))
+                  .foreach((token: String) => print(' ' + token))
+            println
         })
 
         // val closest = allVectors.map {case (uid, p) => (closestPoint(p, kPoints.toArray), Array(uid))}
