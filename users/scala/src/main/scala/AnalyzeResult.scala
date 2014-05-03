@@ -24,16 +24,17 @@ object AnalyzeResult {
         val trimed = raw.drop(raw.indexOf('(') + 1).dropRight(1)
         val strTuples = trimed.split(", ")
         val tuples = strTuples.map(stringToTuple)
-        tuples.sortBy(_._2)
+        // tuples.sortBy(_._2)
+        tuples
     }
 
-    // def getSparseVector(dictSize: Int, vectorElements: Array[(Int, Double)]) = {
-    //     val vector = SparseVector[Double](dictSize)()
-    //     for (i <- 0 until vectorElements.length) {
-    //         vector(vectorElements(i)._1) = vectorElements(i)._2
-    //     }
-    //     vector
-    // }
+    def getSparseVector(dictSize: Int, vectorElements: Array[(Int, Double)]) = {
+        val vector = SparseVector[Double](dictSize)()
+        for (i <- 0 until vectorElements.length) {
+            vector(vectorElements(i)._1) = vectorElements(i)._2
+        }
+        vector
+    }
 
     def getCenters(numOfCenters: Int, dictSize: Int) = {
         val filePath = "/oasis/projects/nsf/csd181/arapat/project/twitter/scripts/users/scala/centers.txt"
@@ -41,35 +42,37 @@ object AnalyzeResult {
         assert(raw.length == numOfCenters)
 
         val vectorElements = raw.map(getVectorElements)
-        // vectorElements.map(getSparseVector(dictSize, _))
-        vectorElements
+        (vectorElements.map(getSparseVector(dictSize, _)),
+            vectorElements.map(_.sortBy((elm: (Int, Double)) => elm._1)))
     }
 
     def genRdd(tweetsFile: String, sc: SparkContext) = {
         sc.textFile(tweetsFile).map(processTweet)
     }
 
-    def processTweet(rawData: String) : (Int, Array[String]) = {
+    def processTweet(rawData: String) : (Int, Array[String], (String, String)) = {
         try {
             val rawDataArray = rawData.split('\t')
             val rawJson = JsonMethods.parse(rawDataArray(3))
             val uid = (rawJson \ "user" \ "id").extract[Int]
+            val uname = (rawJson \ "user" \ "name").extract[String]
+            val udescription = (rawJson \ "user" \ "description").extract[String]
             val tokens = rawDataArray(0).split(' ').map(_.trim)
-            return (uid.toInt, tokens)
+            return (uid.toInt, tokens, (uname, udescription))
         } catch {
             case _: Throwable => // broken tweets
-                return (0, Array())
+                return (0, Array(), ("", ""))
         }
     }
 
-    def normalize(user: (Int, (Int, Array[String]))) = {
+    def normalize(user: (Int, (Int, Array[String], (String, String)))) = {
         val tokenSet = user._2._2.toSet
         val tokenPairs = tokenSet.map(x => (x, user._2._2.count(_ == x)))
             .map(pair => (pair._1, pair._2 / user._2._1.toDouble)).toArray
         (user._1, tokenPairs)
     }
 
-    def toSparse(dict: Map[String, Int])(user: (Int, Array[(String, Double)])): (Int, SparseVector[Double]) = {
+    def toSparse(dict: Map[String, Int], user: (Int, Array[(String, Double)])): (Int, SparseVector[Double]) = {
         val seq = user._2
             .map(pair => (dict.getOrElse(pair._1, -1), pair._2))
             .filter(elm => elm._1 >= 0).sorted
@@ -112,41 +115,54 @@ object AnalyzeResult {
         }
 
         val userAndTokens = unionUsers
-            .map {case (uid, tokens) => (uid, (1, tokens))}
+            .map {case (uid, tokens, info) => (uid, (1, tokens, info))}
             .reduceByKey(
-                (a: (Int, Array[String]), b: (Int, Array[String])) => (a._1 + b._1, a._2 ++ b._2), 240)
-            .filter {case (uid, (counter, tokens)) => counter >= MIN_POST}
+                (a: (Int, Array[String], (String, String)), b: (Int, Array[String], (String, String)))
+                    => (a._1 + b._1, a._2 ++ b._2, a._3), 240)
+            .filter {case (uid, (counter, tokens, info)) => counter >= MIN_POST}
 
         val allWords = userAndTokens
-            .flatMap {case (uid, (counter, tokens)) => tokens.map((_, 1))}
+            .flatMap {case (uid, (counter, tokens, info)) => tokens.map((_, 1))}
             .reduceByKey(_ + _, 240)
             .filter {case (token, counter) => counter >= MIN_OCCURS}
             .map {case (token, counter) => token}
             .collect().sorted
-        val dict = {for (i <- 0 until allWords.length) yield (i, allWords(i))}.toMap
+        val dict = {for (i <- 0 until allWords.length) yield (allWords(i), i)}.toMap
+        val dictReverse = {for (i <- 0 until allWords.length) yield (i, allWords(i))}.toMap
 
         // Construct features
-        // val toSparseFunc = toSparse(dict)(_)
-        // val allVectors = userAndTokens.map(normalize).map(toSparseFunc).cache
+        val allVectors = userAndTokens.map(normalize).map(toSparse(dict, _))
+        val allUsers = userAndTokens.map {
+            case (uid, (counter, tokens, info)) => (uid, (counter, info))
+        }.cache
 
         // Prediction (k-means)
         val K = 30
-        val kPoints = getCenters(K, dict.size)
-        kPoints.foreach((center: Array[(Int, Double)]) => {
-            println("========================")
-            center.slice(0, 20)
-                  .map((tokenPair: (Int, Double)) => dict(tokenPair._1))
-                  .foreach((token: String) => print(' ' + token))
-            println
-        })
+        val kPointsPair = getCenters(K, dict.size)
+        val kPoints = kPointsPair._1
+        val kPointsElements = kPointsPair._2
+        val closest = allVectors.map {case (uid, p) => (closestPoint(p, kPoints), Array(uid))}
+        val prediction = closest.reduceByKey(_ ++ _).collect().sortBy(_._1)
 
-        // val closest = allVectors.map {case (uid, p) => (closestPoint(p, kPoints.toArray), Array(uid))}
-        // val prediction = closest.reduceByKey(_ ++ _).collect()
-        // prediction.foreach((cluster: (Int, Array[Int])) => {
-        //     println(cluster._1) 
-        //     cluster._2.foreach((p: Int) => print(" " + p))
-        //     println
-        // })
+        for (i <- 0 until K) {
+            println("========================")
+
+            println("Top 100 Frequent Tokens")
+            kPointsElements(i).slice(0, 100)
+                  .map((tokenPair: (Int, Double))
+                      => (dictReverse(tokenPair._1), tokenPair._2))
+                  .foreach((tokenPair: (String, Double))
+                      => println(tokenPair._1 + ' ' + tokenPair._2))
+
+            println("Top 100 Active Users")
+            val targetUsers = allUsers.filter {
+                user: (Int, (Int, (String, String)))
+                    => prediction(i)._2.find((uid: Int) => uid == user._1).isEmpty == false
+            }
+            val usersInfo = targetUsers.map((user: (Int, (Int, (String, String))))
+                    => (user._2._1, user._2._2)).collect()
+            usersInfo.sorted.slice(0, 100).foreach(println)
+        }
     }
 
 
